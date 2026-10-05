@@ -1,0 +1,99 @@
+# Flink SQL resources managed by CFK (preview in CFK 3.3). Apply order matters:
+# FlinkEnvironment -> FlinkSecret -> mapping -> catalog -> database -> compute pool.
+# Requires the "default" CMFRestClass (cmfrestclass.yaml) and the flink-sr-tls
+# Secret from certs/create-secrets.sh. All CRs live in the operator namespace.
+apiVersion: platform.confluent.io/v1beta1
+kind: FlinkEnvironment
+metadata:
+  name: flink-env
+  namespace: operator
+spec:
+  kubernetesNamespace: flink
+  cmfRestClassRef:
+    name: default
+    namespace: operator
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: FlinkSecret
+metadata:
+  name: sr-tls
+  namespace: operator
+spec:
+  secretRef: flink-sr-tls
+  cmfRestClassRef:
+    name: default
+    namespace: operator
+---
+# FlinkSecret, mapping and catalog connectionSecretId must all share one name: CFK resolves
+# connectionSecretId to the FlinkSecret CR by name, and CMF keys secrets by the mapping name.
+apiVersion: platform.confluent.io/v1beta1
+kind: FlinkEnvironmentSecretMapping
+metadata:
+  name: sr-tls
+  namespace: operator
+spec:
+  flinkEnvironment: flink-env
+  secretRef:
+    name: sr-tls
+  cmfRestClassRef:
+    name: default
+    namespace: operator
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: FlinkKafkaCatalog
+metadata:
+  name: kafka-catalog
+  namespace: operator
+spec:
+  flinkEnvironment: flink-env
+  srInstance:
+    connectionConfig:
+      schema.registry.url: https://schemaregistry.confluent.svc.cluster.local:8081
+    connectionSecretId: sr-tls
+  cmfRestClassRef:
+    name: default
+    namespace: operator
+---
+# Internal plaintext listener: no secret needed, and the external route's DNS isn't resolvable in-cluster.
+apiVersion: platform.confluent.io/v1beta1
+kind: FlinkKafkaDatabase
+metadata:
+  name: kafka-db
+  namespace: operator
+spec:
+  flinkEnvironment: flink-env
+  catalogRef:
+    name: kafka-catalog
+  kafkaCluster:
+    connectionConfig:
+      bootstrap.servers: kafka.confluent.svc.cluster.local:9071
+  ddlEnvironments:
+    - flink-env
+  cmfRestClassRef:
+    name: default
+    namespace: operator
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: FlinkComputePool
+metadata:
+  name: compute-pool
+  namespace: operator
+spec:
+  flinkEnvironment: flink-env
+  type: DEDICATED
+  clusterSpec:
+    flinkVersion: v1_19
+    image: confluentinc/cp-flink-sql:1.19-cp10
+    flinkConfiguration:
+      execution.checkpointing.interval: 10s
+    taskManager:
+      resource:
+        cpu: 2
+        memory: 2048m
+    jobManager:
+      resource:
+        cpu: 2
+        memory: 2048m
+  cmfRestClassRef:
+    name: default
+    namespace: operator

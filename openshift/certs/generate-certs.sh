@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 # Generates a self-signed root CA and server certs for KRaftController,
-# Kafka, Schema Registry, Control Center, and CMF. Connect stays
-# plaintext - its CRD rejects spec.listeners outright, see
-# 01-confluent-platform.yaml. Schema Registry gets TLS via its own
-# configOverrides (native dual http/https listener)
+# Kafka, Schema Registry, Control Center, and CMF.
 #
 # Output layout (all under ./generated, gitignored - these are private keys):
 #   ca-key.pem, cacerts.pem            <- your CA (cacerts.pem doubles as
@@ -11,9 +8,8 @@
 #   kraftcontroller-key.pem, kraftcontroller-server.pem  <- controller listener cert
 #   kafka-key.pem, kafka-server.pem      <- Kafka's mTLS listener cert
 #   schemaregistry-key.pem, schemaregistry-server.pem  <- Schema Registry's https listener cert (PEM)
-#   sr-keystore.jks, sr-truststore.jks, sr-jksPassword.txt  <- same cert,
-#                                         JKS + Properties-format password file
-#                                         (loaded via spec.mountedSecrets, see below)
+#   sr-keystore.jks, sr-truststore.jks, sr-jksPassword.txt  <- same cert as JKS,
+#                                         the format of Schema Registry's tls.secretRef secret
 #   controlcenter-key.pem, controlcenter-server.pem  <- Control Center's cert
 #   cmf-key.pem, cmf-server.pem          <- CMF's cert (PEM)
 #   cmf-keystore.jks, cmf-truststore.jks <- CMF's cert, JKS - its Helm chart's
@@ -23,21 +19,13 @@
 #   client-appclient.pem, client-appclient-key.pem  <- example client cert
 #   client-appclient-full.pem            <- same cert+key combined (Kafka's PEM
 #                                         keystore loader needs both in one file)
-#
-# Also writes 4 files into ../flink/ for CMF's Flink catalog/database over
-# Kafka's mTLS external listener: catalog.json/database.json hold only the
-# non-secret connection URL + a connectionSecretId reference, while
-# catalog-secret.json/database-secret.json hold the actual cert/key
-# material, meant to be pasted in as a CMF Secret and exposed to the
-# environment before the catalog/database reference it. The *-secret.json
-# files are gitignored (../flink/.gitignore) even though flink/ itself is
-# meant to be published - only those two files embed a private key.
 set -euo pipefail
 
 NAMESPACE="confluent"
 SVC_DOMAIN="svc.cluster.local"
-ROUTE_DOMAIN="apps.redhat.ibm.com"
-DAYS=3650
+ROUTE_DOMAIN="confluent.testing"
+# ROUTE_DOMAIN="apps.rm3.7wse.p1.openshiftapps.com"
+DAYS=365
 STORE_PASSWORD="${STORE_PASSWORD:-confluentpass}"
 OUT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/generated"
 
@@ -77,8 +65,6 @@ gen_server_cert() {
 
   openssl x509 -req -in "${name}.csr" -CA cacerts.pem -CAkey ca-key.pem -CAcreateserial \
     -out "${name}-server.pem" -days "$DAYS" -extfile "${name}-ext.cnf"
-
-  rm -f "${name}.csr" "${name}-ext.cnf"
 }
 
 gen_server_cert kraftcontroller kraftcontroller
@@ -93,18 +79,12 @@ gen_server_cert kafka kafka \
   "DNS:b0.${ROUTE_DOMAIN}" "DNS:b1.${ROUTE_DOMAIN}" "DNS:b2.${ROUTE_DOMAIN}" \
   "DNS:*.${ROUTE_DOMAIN}"
 
-# Schema Registry's own dual http/https listener config (no Route/
-# externalAccess here - see 01-confluent-platform.yaml) just needs
-# in-cluster service DNS coverage.
-gen_server_cert schemaregistry schemaregistry
+# Schema Registry has no Route; it needs in-cluster service DNS (plus the
+# default route hostname, harmless).
+gen_server_cert schemaregistry schemaregistry "DNS:schemaregistry.${ROUTE_DOMAIN}"
 
-# spec.tls.secretRef only mounts certs when a listeners.*.tls.enabled
-# block is present, which we're deliberately not using (see
-# 01-confluent-platform.yaml) - confirmed by "KeyStore Path not
-# accessible" once that was tried. So this builds its own JKS
-# keystore/truststore + a Properties-format password file, loaded via
-# spec.mountedSecrets instead (a plain "mount this secret at a fixed
-# path" mechanism, independent of the tls/listeners machinery).
+# Schema Registry's tls.secretRef (01-confluent-platform.yaml) takes a JKS secret:
+# keystore.jks, truststore.jks and jksPassword.txt.
 echo "==> Generating Schema Registry keystore.jks / truststore.jks (password: ${STORE_PASSWORD})"
 rm -f schemaregistry.p12 sr-keystore.jks sr-truststore.jks sr-jksPassword.txt
 openssl pkcs12 -export \
@@ -117,8 +97,7 @@ keytool -importkeystore -noprompt \
 keytool -importcert -noprompt -trustcacerts -alias caroot \
   -file cacerts.pem -keystore sr-truststore.jks -storepass "$STORE_PASSWORD"
 rm -f schemaregistry.p12
-# FileConfigProvider reads this as a java.util.Properties file, not a
-# raw string - it needs a key=value line, not just the bare password.
+# CFK reads jksPassword.txt as a Properties file, so it needs a key=value line.
 echo "jksPassword=${STORE_PASSWORD}" > sr-jksPassword.txt
 
 # Control Center's route uses the default prefix "controlcenter":
@@ -151,6 +130,9 @@ gen_client_cert() {
   local name="$1" cn="$2"
   echo "==> Generating client cert for $name (CN=$cn)"
   openssl genrsa -out "client-${name}-key.pem" 2048
+  # LibreSSL (macOS) emits PKCS#1; Kafka's PEM loader only reads PKCS#8.
+  openssl pkcs8 -topk8 -nocrypt -in "client-${name}-key.pem" -out "client-${name}-key.p8" \
+    && mv "client-${name}-key.p8" "client-${name}-key.pem"
   openssl req -new -key "client-${name}-key.pem" -out "client-${name}.csr" -subj "/CN=${cn}"
   {
     echo "basicConstraints=CA:FALSE"
@@ -169,60 +151,6 @@ gen_client_cert() {
 
 gen_client_cert appclient appclient
 
-# CMF catalog/database + secret JSON for testing Flink SQL against Kafka's
-# mTLS EXTERNAL listener (the Route) instead of the plaintext internal one.
-# Split so only the *-secret.json files carry cert/key material:
-#   catalog.json / database.json         -> connection URL + connectionSecretId
-#   catalog-secret.json / database-secret.json -> the actual SSL/PEM properties
-FLINK_DIR="$(cd "$OUT/../.." && pwd)/flink"
-echo "==> Generating flink/{catalog,database}.json + *-secret.json"
-python3 -c "
-import json
-
-ca = open('cacerts.pem').read()
-chain = open('client-appclient.pem').read()
-key = open('client-appclient-key.pem').read()
-
-# Kafka's external mTLS listener (Route) requires a client cert.
-database = {
-    'bootstrap.servers': 'kafka.${ROUTE_DOMAIN}:443'
-}
-database_secret = {
-    'security.protocol': 'SSL',
-    'ssl.truststore.type': 'PEM',
-    'ssl.keystore.type': 'PEM',
-    'ssl.truststore.certificates': ca,
-    'ssl.keystore.certificate.chain': chain,
-    'ssl.keystore.key': key,
-}
-
-# Schema Registry's https listener (8082) only needs server-cert trust -
-# no client cert is enforced there - but one's included anyway since
-# it's harmless and keeps one identity uniform across both connections.
-catalog = {
-    'schema.registry.url': 'https://schemaregistry.confluent.svc.cluster.local:8082'
-}
-catalog_secret = {
-    'schema.registry.security.protocol': 'SSL',
-    'schema.registry.ssl.truststore.type': 'PEM',
-    'schema.registry.ssl.keystore.type': 'PEM',
-    'schema.registry.ssl.truststore.certificates': ca,
-    'schema.registry.ssl.keystore.certificate.chain': chain,
-    'schema.registry.ssl.keystore.key': key,
-}
-
-out = '$FLINK_DIR'
-for fname, obj in [
-    ('catalog.json', catalog),
-    ('catalog-secret.json', catalog_secret),
-    ('database.json', database),
-    ('database-secret.json', database_secret),
-]:
-    with open(f'{out}/{fname}', 'w') as f:
-        json.dump(obj, f, indent=2)
-        f.write('\n')
-"
-
 echo
-echo "==> Done. Files are in: $OUT and $FLINK_DIR"
-echo "    Run ../create-secrets.sh next to load these into Kubernetes secrets."
+echo "==> Done. Files are in: $OUT"
+echo "    Run ./create-secrets.sh next to load these into Kubernetes secrets."

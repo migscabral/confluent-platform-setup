@@ -11,7 +11,8 @@ metadata:
   name: cmf
   namespace: operator
 spec:
-  host: cmf.apps.redhat.ibm.com
+  # host: cmf.apps.redhat.ibm.com
+  host: cmf.confluent.testing
   to:
     kind: Service
     name: cmf-service

@@ -10,6 +10,13 @@ metadata:
   namespace: confluent
 spec:
   dataVolumeCapacity: 10G
+  # resources:
+  #   requests:
+  #     cpu: "1"
+  #     memory: 1Gi
+  #   limits:
+  #     cpu: "1"
+  #     memory: 1Gi
   image:
     application: docker.io/confluentinc/cp-server:8.3.1
     init: docker.io/confluentinc/confluent-init-container:3.3.0
@@ -46,7 +53,14 @@ spec:
     pullPolicy: IfNotPresent
     pullSecretRef:
       - dockerhub-secret
-  dataVolumeCapacity: 50Gi
+  dataVolumeCapacity: 10Gi
+  # resources:
+  #   requests:
+  #     cpu: "1"
+  #     memory: 1Gi
+  #   limits:
+  #     cpu: "1"
+  #     memory: 1Gi
   podTemplate:
     podSecurityContext: {}
   tls:
@@ -64,7 +78,7 @@ spec:
       externalAccess:
         type: route
         route:
-          domain: apps.redhat.ibm.com
+          domain: confluent.testing
   dependencies:
     kRaftController:
       clusterRef:
@@ -86,46 +100,25 @@ spec:
   replicas: 1
   podTemplate:
     podSecurityContext: {}
-    # onDemand builds download+install every plugin at pod startup, on
-    # every restart - more plugins means longer build time. Without this,
-    # Kubernetes' default probe interval kills the pod mid-build, which
-    # is what a CrashLoopBackOff during plugin install actually is.
-    probe:
-      liveness:
-        periodSeconds: 400
-        failureThreshold: 1
-        timeoutSeconds: 5
-      readiness:
-        periodSeconds: 400
-        failureThreshold: 5
-        timeoutSeconds: 5
-  build:
-      type: onDemand
-      onDemand:
-          plugins:
-            locationType: confluentHub
-            confluentHub:
-              - name: kafka-connect-datagen
-                owner: confluentinc
-                version: 0.5.2
-              - name: kafka-connect-s3
-                owner: confluentinc
-                version: 12.1.10
-              - name: kafka-connect-jdbc
-                owner: confluentinc
-                version: 10.9.6
-              - name: kafka-connect-mongodb
-                owner: mongodb
-                version: 3.0.1
   image:
-    application: docker.io/confluentinc/cp-server-connect:8.3.1
+    application: image-registry.openshift-image-registry.svc:5000/confluent/connect-custom:8.3.1-plugins
     init: docker.io/confluentinc/confluent-init-container:3.3.0
     pullPolicy: IfNotPresent
-    pullSecretRef:
-      - dockerhub-secret
+    # No pullSecretRef: listing one stops the pod from inheriting the default
+    # ServiceAccount's internal-registry credentials. dockerhub-secret is linked
+    # to that ServiceAccount instead (README step 4).
+  mountedSecrets:
+    - secretRef: connect-ca
   dependencies:
     kafka:
       bootstrapEndpoint: kafka:9071
+  resources:
+    # requests:
+    #   cpu: "1"
+    #   memory: 1Gi
+    # limits:
+    #   cpu: "1"
+    #   memory: 1Gi
 ---
 apiVersion: platform.confluent.io/v1beta1
 kind: SchemaRegistry
@@ -134,6 +127,15 @@ metadata:
   namespace: confluent
 spec:
   replicas: 1
+  # resources:
+  #   requests:
+  #     cpu: "1"
+  #     memory: 1Gi
+  #   limits:
+  #     cpu: "1"
+  #     memory: 1Gi
+  tls:
+    secretRef: sr-ssl-jks
   podTemplate:
     podSecurityContext: {}
   image:
@@ -142,23 +144,16 @@ spec:
     pullPolicy: IfNotPresent
     pullSecretRef:
       - dockerhub-secret
-  mountedSecrets:
-    - secretRef: sr-ssl-jks
   configOverrides:
     server:
-      - listeners=http://0.0.0.0:8081,https://0.0.0.0:8082
-      - inter.instance.protocol=https
       - sni.host.check.enabled=false
-      - config.providers=file
-      - config.providers.file.class=org.apache.kafka.common.config.provider.FileConfigProvider
-      - listener.name.https.ssl.keystore.location=/mnt/secrets/sr-ssl-jks/keystore.jks
-      - listener.name.https.ssl.keystore.password=${file:/mnt/secrets/sr-ssl-jks/jksPassword.txt:jksPassword}
-      - listener.name.https.ssl.key.password=${file:/mnt/secrets/sr-ssl-jks/jksPassword.txt:jksPassword}
-      - listener.name.https.ssl.truststore.location=/mnt/secrets/sr-ssl-jks/truststore.jks
-      - listener.name.https.ssl.truststore.password=${file:/mnt/secrets/sr-ssl-jks/jksPassword.txt:jksPassword}
   dependencies:
     kafka:
       bootstrapEndpoint: kafka.confluent.svc.cluster.local:9071
+  externalAccess:
+    type: route
+    route:
+      domain: confluent.testing
 ---
 apiVersion: platform.confluent.io/v1beta1
 kind: ControlCenter
@@ -174,6 +169,13 @@ spec:
     pullSecretRef:
       - dockerhub-secret
   dataVolumeCapacity: 10Gi
+  # resources:
+  #   requests:
+  #     cpu: "1"
+  #     memory: 1Gi
+  #   limits:
+  #     cpu: "1"
+  #     memory: 1Gi
   podTemplate:
     podSecurityContext: {}
   tls:
@@ -186,19 +188,15 @@ spec:
   externalAccess:
     type: route
     route:
-      domain: apps.redhat.ibm.com
+      domain: confluent.testing
   dependencies:
     schemaRegistry:
-      url: http://schemaregistry.confluent.svc.cluster.local:8081
+      url: https://schemaregistry.confluent.svc.cluster.local:8081
     connect:
     - name: connect
       url: http://connect.confluent.svc.cluster.local:8083
     kafka:
-      bootstrapEndpoint: kafka.apps.redhat.ibm.com:443
-      tls:
-        enabled: true
-      authentication:
-        type: mtls
+      bootstrapEndpoint: kafka.confluent.svc.cluster.local:9071
     prometheusClient:
       url: http://controlcenter.confluent.svc.cluster.local:9090
     alertManagerClient:

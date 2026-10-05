@@ -12,18 +12,6 @@ spec:
     namespace: confluent
 ---
 apiVersion: platform.confluent.io/v1beta1
-kind: KafkaTopic
-metadata:
-  name: stocks-new
-  namespace: confluent
-spec:
-  replicas: 3
-  partitionCount: 10
-  kafkaClusterRef:
-    name: kafka
-    namespace: confluent
----
-apiVersion: platform.confluent.io/v1beta1
 kind: Connector
 metadata:
   name: stocks-connector
@@ -39,6 +27,8 @@ spec:
     key.converter: "org.apache.kafka.connect.storage.StringConverter"
     value.converter: "io.confluent.connect.avro.AvroConverter"
     value.converter.schemas.enable: "true"
-    value.converter.schema.registry.url: "http://schemaregistry.confluent.svc.cluster.local:8081"
+    value.converter.schema.registry.url: "https://schemaregistry.confluent.svc.cluster.local:8081"
+    value.converter.schema.registry.ssl.truststore.type: "PEM"
+    value.converter.schema.registry.ssl.truststore.location: "/mnt/secrets/connect-ca/cacerts.pem"
     max.interval: "1000"
     iterations: "1000000"

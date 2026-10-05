@@ -22,11 +22,12 @@ create_secret "kraftcontroller" "$NAMESPACE"
 create_secret "kafka" "$NAMESPACE"
 create_secret "controlcenter" "$NAMESPACE"
 
-# Schema Registry's own dual-listener config (../01-confluent-platform.yaml)
-# uses spec.mountedSecrets instead of spec.tls.secretRef - that field
-# only mounts anything when a listeners.*.tls.enabled block is present,
-# which we're not using here. mountedSecrets just mounts this secret at
-# a fixed path (/mnt/secrets/sr-ssl-jks/), independent of that machinery.
+# CA-only secret mounted into Connect so its Avro converter can trust Schema Registry.
+kubectl create secret generic connect-ca -n "$NAMESPACE" \
+  --from-file=cacerts.pem="${DIR}/cacerts.pem" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# JKS secret for Schema Registry's tls.secretRef (../01-confluent-platform.yaml).
 kubectl create secret generic sr-ssl-jks -n "$NAMESPACE" \
   --from-file=keystore.jks="${DIR}/sr-keystore.jks" \
   --from-file=truststore.jks="${DIR}/sr-truststore.jks" \
@@ -50,5 +51,13 @@ kubectl create secret generic cmf-truststore -n "$OPERATOR_NAMESPACE" \
   --from-file="${DIR}/cmf-truststore.jks" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-echo "Secrets created/updated in namespace ${NAMESPACE}: tls-kraftcontroller, tls-kafka, tls-controlcenter, sr-ssl-jks"
-echo "Secrets created/updated in namespace ${OPERATOR_NAMESPACE}: cmf-day2-tls, cmf-keystore, cmf-truststore"
+# Backing Secret for the FlinkSecret CR in ../flink/flink-resources.yaml;
+# CFK syncs it to CMF for the Schema Registry catalog connection.
+kubectl create secret generic flink-sr-tls -n "$OPERATOR_NAMESPACE" \
+  --from-literal=schema.registry.security.protocol=SSL \
+  --from-literal=schema.registry.ssl.truststore.type=PEM \
+  --from-file=schema.registry.ssl.truststore.certificates="${DIR}/cacerts.pem" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+echo "Secrets created/updated in namespace ${NAMESPACE}: tls-kraftcontroller, tls-kafka, tls-controlcenter, connect-ca, sr-ssl-jks"
+echo "Secrets created/updated in namespace ${OPERATOR_NAMESPACE}: cmf-day2-tls, cmf-keystore, cmf-truststore, flink-sr-tls"

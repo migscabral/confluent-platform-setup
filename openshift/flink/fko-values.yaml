@@ -5,6 +5,11 @@
 #
 # Requires cert-manager already installed (provisions FKO's own admission-
 # webhook certs, unrelated to our custom CA/mTLS setup below).
+#
+# Docker Hub anonymous pulls are rate-limited - needs the same
+# "dockerhub-secret" already created in the operator namespace.
+imagePullSecrets:
+  - name: dockerhub-secret
 podSecurityContext:
   runAsUser: null
   runAsGroup: null
