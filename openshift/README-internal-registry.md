@@ -43,7 +43,7 @@ cp-enterprise-prometheus:$CFLT_C3_VERSION
 cp-enterprise-alertmanager:$CFLT_C3_VERSION
 confluent-operator:$CFLT_CFK_CHART_VERSION
 cp-flink-kubernetes-operator:1.15.0-cp3
-cp-cmf:2.4.1
+cp-cmf:2.4.2
 cp-flink-sql:1.19-cp10
 "
 ```
