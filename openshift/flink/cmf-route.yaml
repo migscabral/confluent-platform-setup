@@ -1,6 +1,8 @@
 # Exposes CMF externally the same way Kafka/Control Center are exposed -
 # an OpenShift Route on the cluster's apps wildcard domain.
 #
+#   source ../parameters.env && envsubst < cmf-route.yaml | oc apply -f -
+#
 # termination: passthrough is required (not edge/reencrypt): CMF's
 # client-auth is "want" (optional), but a passthrough route is still what
 # lets curl/CFK's CMFRestClass present a client cert all the way to the
@@ -11,8 +13,7 @@ metadata:
   name: cmf
   namespace: operator
 spec:
-  # host: cmf.apps.redhat.ibm.com
-  host: cmf.confluent.testing
+  host: cmf.${CFLT_OCP_ROUTE_DOMAIN}
   to:
     kind: Service
     name: cmf-service

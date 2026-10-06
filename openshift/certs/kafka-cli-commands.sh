@@ -4,7 +4,8 @@
 # (run ./generate-certs.sh first) and the cluster to already have
 # ../01-confluent-platform.yaml applied, so the broker trusts this CA.
 
-BOOTSTRAP=kafka.apps.redhat.ibm.com:443
+source ../parameters.env
+BOOTSTRAP=$CFLT_KAFKA_EXTERNAL_BOOTSTRAP
 
 # list topics (via mTLS)
 kafka-topics.sh --bootstrap-server $BOOTSTRAP --command-config client-ssl.properties --list

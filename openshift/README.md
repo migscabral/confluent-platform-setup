@@ -3,70 +3,83 @@
 ## Prerequisites
 
 - An OpenShift cluster you can `oc login` to, with permission to create namespaces, secrets, and routes.
-- CLI tools on your machine: `oc` (or `kubectl`), `helm`, `openssl`,
-  `keytool` (ships with any JDK), `python3`.
-- A Docker Hub account (username + [PAT](https://app.docker.com/settings/personal-access-tokens)) - anonymous `docker.io` pulls are rate-limited and this repo pulls several images.
-- The Red Hat cert-manager Operator (FKO's admission webhook needs it) is
-  installed in step 6 from `flink/cert-manager-operator.yaml`, unless it is
-  already on the cluster.
+- CLI tools on your machine: `oc`, `helm`, `openssl`,
+  `keytool` (ships with any JDK), `python3`, and `envsubst` (fills
+  `parameters.env` values into the manifests). Install `envsubst` for your OS:
+
+  | OS | Command |
+  |---|---|
+  | macOS | `brew install gettext && brew link --force gettext` |
+  | RHEL / CentOS / Fedora | `sudo dnf install gettext` |
+  | Debian / Ubuntu | `sudo apt-get install gettext-base` |
+  | Alpine | `apk add gettext` |
+- Registry credentials. For the default `docker.io`, a Docker Hub account (username + [PAT](https://app.docker.com/settings/personal-access-tokens)): anonymous pulls are rate-limited and this repo pulls several images. For an internal registry, its pull credentials.
+- cert-manager (FKO's admission webhook needs it) is cluster-wide. Step 6
+  installs the Red Hat cert-manager Operator from
+  `flink/cert-manager-operator.yaml` only if cert-manager is not already on the
+  cluster.
 - CFK/FKO/CMF chart versions come from `parameters.env` -
   no separate install needed, `source` it as shown below.
 
 ## Before you start
 
-Two things are baked into the manifests as literal values, not
-placeholders - swap them for your own before applying:
+Edit `parameters.env` for your environment (every parameter starts with
+`CFLT_`). The manifests are filled in with `envsubst`, so there is nothing to
+search-and-replace:
 
-- **Cluster apps domain**, currently `apps.redhat.ibm.com`. Find yours with:
+- **`CFLT_OCP_ROUTE_DOMAIN`**, the cluster's apps domain used for every Route.
+  Find yours with:
 
-```bash
-oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'
-```
-then:
   ```bash
-  grep -rl 'apps.redhat.ibm.com' . \
-    | xargs sed -i '' 's/apps\.redhat\.ibm\.com/YOUR_DOMAIN_HERE/g'
+  oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'
   ```
-- **Docker Hub credentials** in the `kubectl create secret docker-registry`
-  commands below - use your own username/PAT/email. Images are pulled
-  from `docker.io`, and anonymous pulls are rate-limited.
+- **`CFLT_REGISTRY`**, the image registry (default `docker.io`), and the
+  component versions (`CFLT_CP_VERSION`, `CFLT_INIT_VERSION`,
+  `CFLT_C3_VERSION`, `CFLT_FLINK_IMAGE`, `CFLT_FLINK_VERSION`, and the chart
+  versions).
+- **Registry credentials**: `CFLT_REGISTRY_USERNAME`, `CFLT_REGISTRY_PASSWORD`
+  (a personal access token for Docker Hub) and `CFLT_REGISTRY_EMAIL`, used by
+  the `oc create secret docker-registry` commands below. Don't commit real values.
+
+Run all the steps below in the same shell: `parameters.env` is sourced once in
+step 1 and `envsubst` reads those variables.
 
 ## Setup
 
 ### 1. Prerequisites
 
 ```bash
-kubectl apply -f 00-namespaces.yaml
+oc apply -f 00-namespaces.yaml
 
-source parameters.env   # CFK_CHART_VERSION, FKO_CHART_VERSION, CMF_CHART_VERSION
+source parameters.env   # registry, route domain, component and chart versions
 
 helm repo add confluentinc https://packages.confluent.io/helm
 helm repo update
 
-kubectl create secret docker-registry dockerhub-secret \
-  --docker-server=https://index.docker.io/v1/ \
-  --docker-username="dockerhub-username" \
-  --docker-password="dockerhub-personal-access-token" \
-  --docker-email="dockerhub-user-email" \
+oc create secret docker-registry dockerhub-secret \
+  --docker-server="$CFLT_REGISTRY_SERVER" \
+  --docker-username="$CFLT_REGISTRY_USERNAME" \
+  --docker-password="$CFLT_REGISTRY_PASSWORD" \
+  --docker-email="$CFLT_REGISTRY_EMAIL" \
   -n confluent
 
-kubectl create secret docker-registry dockerhub-secret \
-  --docker-server=https://index.docker.io/v1/ \
-  --docker-username="dockerhub-username" \
-  --docker-password="dockerhub-personal-access-token" \
-  --docker-email="dockerhub-user-email" \
+oc create secret docker-registry dockerhub-secret \
+  --docker-server="$CFLT_REGISTRY_SERVER" \
+  --docker-username="$CFLT_REGISTRY_USERNAME" \
+  --docker-password="$CFLT_REGISTRY_PASSWORD" \
+  --docker-email="$CFLT_REGISTRY_EMAIL" \
   -n operator
 
-kubectl create secret docker-registry dockerhub-secret \
-  --docker-server=https://index.docker.io/v1/ \
-  --docker-username="dockerhub-username" \
-  --docker-password="dockerhub-personal-access-token" \
-  --docker-email="dockerhub-user-email" \
+oc create secret docker-registry dockerhub-secret \
+  --docker-server="$CFLT_REGISTRY_SERVER" \
+  --docker-username="$CFLT_REGISTRY_USERNAME" \
+  --docker-password="$CFLT_REGISTRY_PASSWORD" \
+  --docker-email="$CFLT_REGISTRY_EMAIL" \
   -n flink
 
 helm upgrade --install confluent-operator confluentinc/confluent-for-kubernetes \
-  -n operator --version "$CFK_CHART_VERSION" \
-  --set image.registry=docker.io \
+  -n operator --version "$CFLT_CFK_CHART_VERSION" \
+  --set image.registry="$CFLT_REGISTRY" \
   --set imagePullSecretRef="dockerhub-secret" \
   --set enableCMFDay2Ops=true \
   --set enableFlinkSQL=true \
@@ -103,39 +116,59 @@ cluster's internal registry:
 
 ```bash
 cd ..
-oc secrets link builder dockerhub-secret -n confluent   # base image pull from Docker Hub
 # Connect pulls its image from the internal registry (SA credentials) and the init
-# container from Docker Hub, so the pod's service account needs both.
+# container from $CFLT_REGISTRY, so the pod's service account needs both.
+# (The secret is named dockerhub-secret throughout, whatever registry it points to.)
 oc secrets link default dockerhub-secret --for=pull -n confluent
-oc new-build --name connect-custom --binary --strategy=docker --to=connect-custom:8.3.1-plugins -n confluent
+# Build args go on the BuildConfig (oc start-build --build-arg is not applied to binary builds),
+# and the base image pull secret must be set on it explicitly.
+oc new-build --name connect-custom --binary --strategy=docker --to=connect-custom:${CFLT_CP_VERSION}-plugins \
+  --build-arg=CFLT_REGISTRY=$CFLT_REGISTRY --build-arg=CFLT_CP_VERSION=$CFLT_CP_VERSION -n confluent
+oc set build-secret --pull bc/connect-custom dockerhub-secret -n confluent
 oc start-build connect-custom --from-dir=connect --follow -n confluent
 ```
 
 
 ```bash
-kubectl config set-context --current --namespace confluent
-kubectl apply -f 01-confluent-platform.yaml
+oc project confluent
+envsubst < 01-confluent-platform.yaml | oc apply -f -
 
 ## This command may take a few minutes to deploy all the resources.
 ## Also if controlcenter pod is showing 2/3 availability, then try deleteing the pod.
-## kubectl delete pod controlcenter-0
+## oc delete pod controlcenter-0
 
-kubectl apply -f 02-connector.yaml
+oc apply -f 02-connector.yaml
 
 ## Get all the public URLs for kafka and controlcenter
-kubectl get routes
+oc get routes
 
 ```
+
+#### Optional: roll Connect onto a rebuilt image
+
+The Connect resource refers to the image by tag with `pullPolicy: IfNotPresent`,
+so rebuilding the image does not restart the pod. To roll it, pin the new
+build by digest. Run this after every rebuild, as it changes the resource and
+makes CFK restart the pod:
+
+```bash
+DIGEST=$(oc get istag connect-custom:${CFLT_CP_VERSION}-plugins -n confluent -o jsonpath='{.image.metadata.name}')
+oc patch connect connect -n confluent --type merge \
+  -p "{\"spec\":{\"image\":{\"application\":\"image-registry.openshift-image-registry.svc:5000/confluent/connect-custom@${DIGEST}\"}}}"
+```
+
+Applying `01-confluent-platform.yaml` again sets the tag back, so repeat this
+step after any re-apply.
 
 
 ### 5. Verify Kafka and Schema Registry from your laptop
 
 ```bash
 cd certs
-BOOTSTRAP=kafka.apps.redhat.ibm.com:443
+source ../parameters.env
 
 ## Make sure confluent-platform cli is available 
-kafka-topics --bootstrap-server $BOOTSTRAP --command-config client-ssl.properties --list
+kafka-topics --bootstrap-server $CFLT_KAFKA_EXTERNAL_BOOTSTRAP --command-config client-ssl.properties --list
 ```
 
 More commands: `certs/kafka-cli-commands.sh`.
@@ -143,7 +176,7 @@ More commands: `certs/kafka-cli-commands.sh`.
 Schema Registry sanity check (HTTPS via its route; only the CA is needed, no client cert):
 
 ```bash
-curl --cacert generated/cacerts.pem https://schemaregistry.apps.redhat.ibm.com/subjects
+curl --cacert generated/cacerts.pem https://schemaregistry.$CFLT_OCP_ROUTE_DOMAIN/subjects
 # after the datagen connector in step 4 is running: ["stocks-value"]
 ```
 
@@ -152,19 +185,26 @@ curl --cacert generated/cacerts.pem https://schemaregistry.apps.redhat.ibm.com/s
 ```bash
 cd ..
 
-# provisions FKO's own admission-webhook certs
-kubectl apply -f flink/cert-manager-operator.yaml
-until kubectl get crd certificates.cert-manager.io >/dev/null 2>&1; do sleep 5; done
-kubectl wait --for=condition=Available deployment --all -n cert-manager --timeout=300s
+# FKO's admission webhook needs cert-manager, which is cluster-wide: install it only if absent.
+# Check for a running controller, not the CRD: CRDs survive an uninstall.
+if oc get deployment -A -l app.kubernetes.io/name=cert-manager -o name 2>/dev/null | grep -q .; then
+  echo "cert-manager already present, skipping install"
+else
+  oc apply -f flink/cert-manager-operator.yaml
+  until oc get deployment -n cert-manager -l app.kubernetes.io/name=cert-manager -o name 2>/dev/null | grep -q .; do sleep 5; done
+  oc wait --for=condition=Available deployment --all -n cert-manager --timeout=300s
+fi
 
 helm upgrade --install cp-flink-kubernetes-operator confluentinc/flink-kubernetes-operator \
-  -n operator --version "$FKO_CHART_VERSION" -f flink/fko-values.yaml
+  -n operator --version "$CFLT_FKO_CHART_VERSION" -f flink/fko-values.yaml \
+  --set image.repository="$CFLT_REGISTRY/confluentinc/cp-flink-kubernetes-operator"
 
 helm upgrade --install cmf confluentinc/confluent-manager-for-apache-flink \
-  -n operator --version "$CMF_CHART_VERSION" -f flink/cmf-values.yaml
+  -n operator --version "$CFLT_CMF_CHART_VERSION" -f flink/cmf-values.yaml \
+  --set image.repository="$CFLT_REGISTRY/confluentinc"
 
-kubectl apply -f flink/cmf-route.yaml
-kubectl apply -f flink/cmfrestclass.yaml
+envsubst < flink/cmf-route.yaml | oc apply -f -
+oc apply -f flink/cmfrestclass.yaml
 ```
 
 ### 7. Run a Flink workload, via CFK resources
@@ -175,14 +215,15 @@ preview feature in CFK 3.3). CFK syncs them to CMF through the `default`
 CMFRestClass from step 6.
 
 ```bash
-kubectl apply -f flink/flink-resources.yaml
+envsubst < flink/flink-resources.yaml | oc apply -f -
 
 # each should show cfkInternalState: CREATED
-kubectl get flinkenvironment,flinksecret,flinkenvironmentsecretmapping,flinkkafkacatalog,flinkkafkadatabase,flinkcomputepool -n operator
+oc get flinkenvironment,flinksecret,flinkenvironmentsecretmapping,flinkkafkacatalog,flinkkafkadatabase,flinkcomputepool -n operator
 
-# Flink pods pull cp-flink-sql from Docker Hub as the service account CMF creates
-# for the environment; without this they fail with "too many requests to registry".
-kubectl secrets link cmf-env-sa-flink-env dockerhub-secret --for=pull -n flink
+# Flink pods pull cp-flink-sql from $CFLT_REGISTRY as the service account CMF creates
+# for the environment; without this they fail with "too many requests to registry"
+# (Docker Hub) or an authentication error (private registry).
+oc secrets link cmf-env-sa-flink-env dockerhub-secret --for=pull -n flink
 ```
 
 - The catalog reaches Schema Registry over HTTPS using the `flink-sr-tls`
@@ -194,7 +235,7 @@ kubectl secrets link cmf-env-sa-flink-env dockerhub-secret --for=pull -n flink
   the same name (`sr-tls`): CFK resolves `connectionSecretId` to the
   `FlinkSecret` by name, and CMF silently ignores a catalog whose mapping is missing.
 
-**Run SQL** in the CMF UI (`kubectl get routes -n operator` for its URL), in the `flink-env` environment's SQL workspace, against `compute-pool`:
+**Run SQL** in the CMF UI (`oc get routes -n operator` for its URL), in the `flink-env` environment's SQL workspace, against `compute-pool`:
 ```sql
 SHOW TABLES;
 ```
@@ -203,8 +244,11 @@ SHOW TABLES;
 SELECT * FROM stocks;
 ```
 
-Check the running Pods for flink SQL
-kubectl get pods -n flink
+Check the Flink SQL pods:
+
+```bash
+oc get pods -n flink
+```
 
 `stocks` is the topic `02-connector.yaml` already creates and the datagen connector already writes to - a Kafka catalog/database surfaces existing topics as tables automatically, no DDL needed. 
 
@@ -218,19 +262,19 @@ then certs and secrets.
 
 ```bash
 # Flink / CMF
-kubectl delete -f flink/flink-resources.yaml
-kubectl delete -f flink/cmfrestclass.yaml
-kubectl delete -f flink/cmf-route.yaml
+oc delete -f flink/flink-resources.yaml
+oc delete -f flink/cmfrestclass.yaml
+oc delete -f flink/cmf-route.yaml
 helm uninstall cmf -n operator
 helm uninstall cp-flink-kubernetes-operator -n operator
 
 # Confluent Platform
-kubectl delete -f 02-connector.yaml
-kubectl delete -f 01-confluent-platform.yaml
+oc delete -f 02-connector.yaml
+oc delete -f 01-confluent-platform.yaml
 
 # TLS secrets
-kubectl delete secret tls-kraftcontroller tls-kafka tls-controlcenter connect-ca sr-ssl-jks -n confluent
-kubectl delete secret cmf-day2-tls cmf-keystore cmf-truststore flink-sr-tls -n operator
+oc delete secret tls-kraftcontroller tls-kafka tls-controlcenter connect-ca sr-ssl-jks -n confluent
+oc delete secret cmf-day2-tls cmf-keystore cmf-truststore flink-sr-tls -n operator
 
 # generated certs on disk
 rm -rf certs/generated
@@ -243,9 +287,10 @@ and `security/`:
 
 ```bash
 helm uninstall confluent-operator -n operator
-kubectl delete -f flink/cert-manager-operator.yaml
-kubectl delete secret dockerhub-secret -n confluent
-kubectl delete secret dockerhub-secret -n operator
-kubectl delete secret dockerhub-secret -n flink
-kubectl delete -f 00-namespaces.yaml
+# only if step 6 installed cert-manager and nothing else on the cluster uses it
+oc delete -f flink/cert-manager-operator.yaml
+oc delete secret dockerhub-secret -n confluent
+oc delete secret dockerhub-secret -n operator
+oc delete secret dockerhub-secret -n flink
+oc delete -f 00-namespaces.yaml
 ```

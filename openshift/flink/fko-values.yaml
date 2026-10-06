@@ -1,12 +1,13 @@
 # Helm values for confluentinc/flink-kubernetes-operator on OpenShift.
 #
 #   helm upgrade --install cp-flink-kubernetes-operator confluentinc/flink-kubernetes-operator \
-#     -n operator --version "$FKO_CHART_VERSION" -f fko-values.yaml
+#     -n operator --version "$CFLT_FKO_CHART_VERSION" -f fko-values.yaml \
+#     --set image.repository="$CFLT_REGISTRY/confluentinc/cp-flink-kubernetes-operator"
 #
 # Requires cert-manager already installed (provisions FKO's own admission-
 # webhook certs, unrelated to our custom CA/mTLS setup below).
 #
-# Docker Hub anonymous pulls are rate-limited - needs the same
+# Docker Hub anonymous pulls are rate-limited (or a private registry needs credentials) - needs the same
 # "dockerhub-secret" already created in the operator namespace.
 imagePullSecrets:
   - name: dockerhub-secret

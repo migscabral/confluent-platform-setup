@@ -21,10 +21,11 @@
 #                                         keystore loader needs both in one file)
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/../parameters.env"
+
 NAMESPACE="confluent"
 SVC_DOMAIN="svc.cluster.local"
-ROUTE_DOMAIN="confluent.testing"
-# ROUTE_DOMAIN="apps.rm3.7wse.p1.openshiftapps.com"
+ROUTE_DOMAIN="${CFLT_OCP_ROUTE_DOMAIN}"
 DAYS=365
 STORE_PASSWORD="${STORE_PASSWORD:-confluentpass}"
 OUT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/generated"

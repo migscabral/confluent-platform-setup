@@ -2,6 +2,8 @@
 # FlinkEnvironment -> FlinkSecret -> mapping -> catalog -> database -> compute pool.
 # Requires the "default" CMFRestClass (cmfrestclass.yaml) and the flink-sr-tls
 # Secret from certs/create-secrets.sh. All CRs live in the operator namespace.
+#
+#   source ../parameters.env && envsubst < flink-resources.yaml | oc apply -f -
 apiVersion: platform.confluent.io/v1beta1
 kind: FlinkEnvironment
 metadata:
@@ -82,8 +84,8 @@ spec:
   flinkEnvironment: flink-env
   type: DEDICATED
   clusterSpec:
-    flinkVersion: v1_19
-    image: confluentinc/cp-flink-sql:1.19-cp10
+    flinkVersion: ${CFLT_FLINK_VERSION}
+    image: ${CFLT_FLINK_IMAGE}
     flinkConfiguration:
       execution.checkpointing.interval: 10s
     taskManager:

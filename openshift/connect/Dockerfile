@@ -1,4 +1,6 @@
-FROM confluentinc/cp-server-connect:8.3.1
+ARG CFLT_REGISTRY
+ARG CFLT_CP_VERSION
+FROM ${CFLT_REGISTRY}/confluentinc/cp-server-connect:${CFLT_CP_VERSION}
 
 USER root
 COPY plugins/*.zip /tmp/plugins/

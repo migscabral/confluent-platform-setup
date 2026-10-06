@@ -1,7 +1,6 @@
-# Prereqs (run once, from kafka-cc-cmf-tls/certs/):
-#    grep -rl 'apps.redhat.ibm.com' . | xargs sed -i '' 's/apps\.redhat\.ibm\.com/YOUR_DOMAIN_HERE/g'
-#   ./generate-certs.sh  
-#   ./create-secrets.sh   
+# Apply with parameters.env substituted in:
+#   source parameters.env && envsubst < 01-confluent-platform.yaml | oc apply -f -
+# Prereqs (once): certs/generate-certs.sh, certs/create-secrets.sh
 ---
 apiVersion: platform.confluent.io/v1beta1
 kind: KRaftController
@@ -18,8 +17,8 @@ spec:
   #     cpu: "1"
   #     memory: 1Gi
   image:
-    application: docker.io/confluentinc/cp-server:8.3.1
-    init: docker.io/confluentinc/confluent-init-container:3.3.0
+    application: ${CFLT_REGISTRY}/confluentinc/cp-server:${CFLT_CP_VERSION}
+    init: ${CFLT_REGISTRY}/confluentinc/confluent-init-container:${CFLT_INIT_VERSION}
     pullPolicy: IfNotPresent
     pullSecretRef:
       - dockerhub-secret
@@ -48,8 +47,8 @@ metadata:
 spec:
   replicas: 3
   image:
-    application: docker.io/confluentinc/cp-server:8.3.1
-    init: docker.io/confluentinc/confluent-init-container:3.3.0
+    application: ${CFLT_REGISTRY}/confluentinc/cp-server:${CFLT_CP_VERSION}
+    init: ${CFLT_REGISTRY}/confluentinc/confluent-init-container:${CFLT_INIT_VERSION}
     pullPolicy: IfNotPresent
     pullSecretRef:
       - dockerhub-secret
@@ -78,7 +77,7 @@ spec:
       externalAccess:
         type: route
         route:
-          domain: confluent.testing
+          domain: ${CFLT_OCP_ROUTE_DOMAIN}
   dependencies:
     kRaftController:
       clusterRef:
@@ -101,8 +100,8 @@ spec:
   podTemplate:
     podSecurityContext: {}
   image:
-    application: image-registry.openshift-image-registry.svc:5000/confluent/connect-custom:8.3.1-plugins
-    init: docker.io/confluentinc/confluent-init-container:3.3.0
+    application: image-registry.openshift-image-registry.svc:5000/confluent/connect-custom:${CFLT_CP_VERSION}-plugins
+    init: ${CFLT_REGISTRY}/confluentinc/confluent-init-container:${CFLT_INIT_VERSION}
     pullPolicy: IfNotPresent
     # No pullSecretRef: listing one stops the pod from inheriting the default
     # ServiceAccount's internal-registry credentials. dockerhub-secret is linked
@@ -139,8 +138,8 @@ spec:
   podTemplate:
     podSecurityContext: {}
   image:
-    application: docker.io/confluentinc/cp-schema-registry:8.3.1
-    init: docker.io/confluentinc/confluent-init-container:3.3.0
+    application: ${CFLT_REGISTRY}/confluentinc/cp-schema-registry:${CFLT_CP_VERSION}
+    init: ${CFLT_REGISTRY}/confluentinc/confluent-init-container:${CFLT_INIT_VERSION}
     pullPolicy: IfNotPresent
     pullSecretRef:
       - dockerhub-secret
@@ -153,7 +152,7 @@ spec:
   externalAccess:
     type: route
     route:
-      domain: confluent.testing
+      domain: ${CFLT_OCP_ROUTE_DOMAIN}
 ---
 apiVersion: platform.confluent.io/v1beta1
 kind: ControlCenter
@@ -163,8 +162,8 @@ metadata:
 spec:
   replicas: 1
   image:
-    application: docker.io/confluentinc/cp-enterprise-control-center-next-gen:2.4.0
-    init: docker.io/confluentinc/confluent-init-container:3.3.0
+    application: ${CFLT_REGISTRY}/confluentinc/cp-enterprise-control-center-next-gen:${CFLT_C3_VERSION}
+    init: ${CFLT_REGISTRY}/confluentinc/confluent-init-container:${CFLT_INIT_VERSION}
     pullPolicy: IfNotPresent
     pullSecretRef:
       - dockerhub-secret
@@ -188,7 +187,7 @@ spec:
   externalAccess:
     type: route
     route:
-      domain: confluent.testing
+      domain: ${CFLT_OCP_ROUTE_DOMAIN}
   dependencies:
     schemaRegistry:
       url: https://schemaregistry.confluent.svc.cluster.local:8081
@@ -203,9 +202,9 @@ spec:
       url: http://controlcenter.confluent.svc.cluster.local:9093
   services:
     prometheus:
-      image: confluentinc/cp-enterprise-prometheus:2.4.0
+      image: ${CFLT_REGISTRY}/confluentinc/cp-enterprise-prometheus:${CFLT_C3_VERSION}
       pvc:
         dataVolumeCapacity: 10Gi
     alertmanager:
-      image: confluentinc/cp-enterprise-alertmanager:2.4.0
+      image: ${CFLT_REGISTRY}/confluentinc/cp-enterprise-alertmanager:${CFLT_C3_VERSION}
 ---
