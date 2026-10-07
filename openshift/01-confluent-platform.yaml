@@ -1,6 +1,7 @@
 # Apply with parameters.env substituted in:
 #   source parameters.env && envsubst < 01-confluent-platform.yaml | oc apply -f -
 # Prereqs (once): certs/generate-certs.sh, certs/create-secrets.sh
+# Resources are demo sizes under podTemplate (the only place CFK reads them); adjust to your workload.
 ---
 apiVersion: platform.confluent.io/v1beta1
 kind: KRaftController
@@ -9,13 +10,6 @@ metadata:
   namespace: confluent
 spec:
   dataVolumeCapacity: 10G
-  # resources:
-  #   requests:
-  #     cpu: "1"
-  #     memory: 1Gi
-  #   limits:
-  #     cpu: "1"
-  #     memory: 1Gi
   image:
     application: ${CFLT_REGISTRY}/confluentinc/cp-server:${CFLT_CP_VERSION}
     init: ${CFLT_REGISTRY}/confluentinc/confluent-init-container:${CFLT_INIT_VERSION}
@@ -25,6 +19,18 @@ spec:
   replicas: 3
   podTemplate:
     podSecurityContext: {}
+    resources:
+      requests:
+        cpu: "500m"
+        memory: 2Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+  # CFK defaults the heap to 100% of requests.memory; the docs recommend at most 80% for KRaft.
+  configOverrides:
+    jvm:
+      - "-Xms1500M"
+      - "-Xmx1500M"
   tls:
     secretRef: tls-kraftcontroller
   listeners:
@@ -53,15 +59,20 @@ spec:
     pullSecretRef:
       - dockerhub-secret
   dataVolumeCapacity: 10Gi
-  # resources:
-  #   requests:
-  #     cpu: "1"
-  #     memory: 1Gi
-  #   limits:
-  #     cpu: "1"
-  #     memory: 1Gi
   podTemplate:
     podSecurityContext: {}
+    resources:
+      requests:
+        cpu: "1"
+        memory: 4Gi
+      limits:
+        cpu: "4"
+        memory: 8Gi
+  # CFK defaults the heap to 100% of requests.memory; the docs recommend at most 50% for brokers.
+  configOverrides:
+    jvm:
+      - "-Xms2G"
+      - "-Xmx2G"
   tls:
     secretRef: tls-kafka
   listeners:
@@ -99,10 +110,18 @@ spec:
   replicas: 1
   podTemplate:
     podSecurityContext: {}
+    resources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        cpu: "4"
+        memory: 4Gi
   image:
     application: image-registry.openshift-image-registry.svc:5000/confluent/connect-custom:${CFLT_CP_VERSION}-plugins
     init: ${CFLT_REGISTRY}/confluentinc/confluent-init-container:${CFLT_INIT_VERSION}
-    pullPolicy: IfNotPresent
+    # Always: a restarted pod pulls whatever the connect-custom tag currently points to.
+    pullPolicy: Always
     # No pullSecretRef: listing one stops the pod from inheriting the default
     # ServiceAccount's internal-registry credentials. dockerhub-secret is linked
     # to that ServiceAccount instead (README step 4).
@@ -111,13 +130,6 @@ spec:
   dependencies:
     kafka:
       bootstrapEndpoint: kafka:9071
-  resources:
-    # requests:
-    #   cpu: "1"
-    #   memory: 1Gi
-    # limits:
-    #   cpu: "1"
-    #   memory: 1Gi
 ---
 apiVersion: platform.confluent.io/v1beta1
 kind: SchemaRegistry
@@ -126,17 +138,17 @@ metadata:
   namespace: confluent
 spec:
   replicas: 1
-  # resources:
-  #   requests:
-  #     cpu: "1"
-  #     memory: 1Gi
-  #   limits:
-  #     cpu: "1"
-  #     memory: 1Gi
   tls:
     secretRef: sr-ssl-jks
   podTemplate:
     podSecurityContext: {}
+    resources:
+      requests:
+        cpu: "500m"
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
   image:
     application: ${CFLT_REGISTRY}/confluentinc/cp-schema-registry:${CFLT_CP_VERSION}
     init: ${CFLT_REGISTRY}/confluentinc/confluent-init-container:${CFLT_INIT_VERSION}
@@ -168,22 +180,31 @@ spec:
     pullSecretRef:
       - dockerhub-secret
   dataVolumeCapacity: 10Gi
-  # resources:
-  #   requests:
-  #     cpu: "1"
-  #     memory: 1Gi
-  #   limits:
-  #     cpu: "1"
-  #     memory: 1Gi
   podTemplate:
     podSecurityContext: {}
+    # CFK only reads resources from podTemplate (a top-level spec.resources is silently dropped).
+    # The CPU limit also caps the processor count the JVM sees (nodes have many cores),
+    # which keeps Jetty's thread requirement under its 200-thread limit.
+    resources:
+      requests:
+        cpu: "1"
+        memory: 4Gi
+      limits:
+        cpu: "4"
+        memory: 8Gi
   tls:
     secretRef: tls-controlcenter
   configOverrides:
+  #  jvm:
+  #    # Explicit fallback in case the container CPU limit is not detected by the JVM.
+  #    - -XX:ActiveProcessorCount=4
+  #    - -Xms2g
+  #    - -Xmx4g
    server:
      - confluent.controlcenter.telemetry.enabled=true
      - confluent.controlcenter.telemetry.collector.enabled=true
      - confluent.controlcenter.telemetry.collector.port=4318
+    #  - confluent.controlcenter.streams.num.stream.threads=4
   externalAccess:
     type: route
     route:

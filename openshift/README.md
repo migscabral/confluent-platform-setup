@@ -144,21 +144,18 @@ oc get routes
 
 ```
 
-#### Optional: roll Connect onto a rebuilt image
+#### Optional: run a rebuilt Connect image
 
-The Connect resource refers to the image by tag with `pullPolicy: IfNotPresent`,
-so rebuilding the image does not restart the pod. To roll it, pin the new
-build by digest. Run this after every rebuild, as it changes the resource and
-makes CFK restart the pod:
+The Connect resource uses `pullPolicy: Always` on the `connect-custom` tag, so
+a restarted pod pulls the latest build. After every rebuild, restart the pod
+(one at a time if you run several replicas):
 
 ```bash
-DIGEST=$(oc get istag connect-custom:${CFLT_CP_VERSION}-plugins -n confluent -o jsonpath='{.image.metadata.name}')
-oc patch connect connect -n confluent --type merge \
-  -p "{\"spec\":{\"image\":{\"application\":\"image-registry.openshift-image-registry.svc:5000/confluent/connect-custom@${DIGEST}\"}}}"
+oc delete pod connect-0 -n confluent
 ```
 
-Applying `01-confluent-platform.yaml` again sets the tag back, so repeat this
-step after any re-apply.
+Nothing else is needed, and re-applying `01-confluent-platform.yaml` does not
+change which image is used.
 
 
 ### 5. Verify Kafka and Schema Registry from your laptop
