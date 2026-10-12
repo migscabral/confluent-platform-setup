@@ -152,8 +152,10 @@ These are the zips baked into the Connect image (`connect/Dockerfile` copies
    installs from these local files and needs no access to Confluent Hub.
 
 The JDBC connector package does not include every database driver (for example
-MySQL or Oracle). This deployment creates no JDBC connector, so none is needed;
-add the driver jar to the plugin directory if you use one.
+MySQL/MariaDB or Oracle). This deployment creates no JDBC connector, so none is
+needed by default. If you use one, download the driver jar (for MariaDB, MySQL
+Connector/J) and put it in `connect/drivers/`; the Dockerfile copies it into the
+JDBC connector's `lib` directory.
 
 ## Not covered here
 

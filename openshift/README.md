@@ -111,8 +111,12 @@ Creates `tls-kraftcontroller`, `tls-kafka`, `tls-controlcenter`,
 ### 4. Deploy KRaft / Kafka / Connect / Schema Registry / Control Center
 
 Connect runs a custom image with the connector plugins baked in. Put the
-plugin zips in `connect/plugins/` first, then build the image into the
-cluster's internal registry:
+plugin zips in `connect/plugins/` first. Create `connect/drivers/` too (it can
+be empty); any JDBC driver jars in it are copied into the JDBC connector's
+`lib` directory. The JDBC package bundles PostgreSQL and SQLite only, so add the
+driver jar for other databases here, for example MySQL Connector/J for
+MySQL/MariaDB (`jdbc:mysql://` URL), `ojdbc*.jar` for Oracle, or the Microsoft
+driver for SQL Server. Then build the image into the cluster's internal registry:
 
 ```bash
 cd ..
@@ -156,6 +160,45 @@ oc delete pod connect-0 -n confluent
 
 Nothing else is needed, and re-applying `01-confluent-platform.yaml` does not
 change which image is used.
+
+#### Redeploy connectors after adding plugins or drivers
+
+1. Add the new plugin zips to `connect/plugins/` and driver jars to
+   `connect/drivers/`.
+2. Rebuild the image (the `oc new-build` and `oc set build-secret` steps above
+   are one-time; only rebuild):
+
+   ```bash
+   oc start-build connect-custom --from-dir=connect --follow -n confluent
+   ```
+
+3. Restart Connect so it pulls the new image (one pod at a time if replicas > 1):
+
+   ```bash
+   oc delete pod connect-0 -n confluent
+   oc get pods -n confluent -w   # wait for connect-0 to be Ready
+   ```
+
+4. Check the plugin is loaded:
+
+   ```bash
+   oc exec connect-0 -n confluent -- curl -s http://localhost:8083/connector-plugins | grep -i jdbc
+   oc exec connect-0 -n confluent -- ls /usr/share/confluent-hub-components/confluentinc-kafka-connect-jdbc/lib | grep -i -E 'mysql|mariadb|ojdbc|mssql'
+   ```
+
+5. Create or update the `Connector` resources. Put database credentials in a
+   Secret, not in `configs`, then apply:
+
+   ```bash
+   oc apply -f 02-connector.yaml
+   oc get connector -n confluent
+   oc describe connector <name> -n confluent
+   ```
+
+   Existing connectors keep running after the restart, because their config is
+   stored in Kafka and CFK reconciles them. Check that they show `RUNNING`.
+
+6. Confirm the Connect pods can reach the database (for MariaDB, TCP 3306).
 
 
 ### 5. Verify Kafka and Schema Registry from your laptop
